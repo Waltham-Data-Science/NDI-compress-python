@@ -8,25 +8,10 @@ import numpy as np
 import tarfile
 from .header import read_ndi_header
 
-# Determine path to C executables
-# Default: ../../../C/bin relative to this file
-_PKG_DIR = os.path.dirname(os.path.abspath(__file__))
-_DEFAULT_BIN_PATH = os.path.abspath(os.path.join(_PKG_DIR, "..", "..", "C", "bin"))
-NDI_BIN_PATH = os.environ.get("NDI_BIN_PATH", _DEFAULT_BIN_PATH)
-
-def _get_exec_path(exec_name):
-    path = os.path.join(NDI_BIN_PATH, exec_name)
-    if not os.path.exists(path):
-        # Fallback for Windows if extension is missing
-        if os.name == 'nt' and not path.endswith('.exe'):
-            path_exe = path + '.exe'
-            if os.path.exists(path_exe):
-                return path_exe
-        raise FileNotFoundError(f"C executable not found: {path}")
-    return path
+from .utility import get_executable_path
 
 def _call_c_exec(exec_name, args):
-    exec_path = _get_exec_path(exec_name)
+    exec_path = get_executable_path(exec_name)
     cmd = [exec_path] + args
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -130,7 +115,7 @@ def expand_digital(fullfilename):
              # Find .nbh file
              nbh_member = None
              for member in tar.getmembers():
-                 if member.name.endswith('.nbh'):
+                 if member.name.endswith('.nbh') and not os.path.basename(member.name).startswith('._'):
                      nbh_member = member
                      break
              if not nbh_member:
@@ -152,7 +137,29 @@ def expand_digital(fullfilename):
         S = params['original_rows']
         C = params['original_columns']
 
-        raw_data = np.fromfile(out_bin, dtype=np.uint8)
+        bits = params.get('original_bits_per_sample', 8)
+        unsigned = params.get('original_isunsigned', 1)
+
+        # Check if output size matches expected bits
+        file_size = os.path.getsize(out_bin)
+        expected_size = S * C * (bits // 8)
+
+        if file_size != expected_size and file_size == S * C:
+            # Fallback: Binary produced 8-bit data despite header indicating otherwise
+            bits = 8
+
+        if bits == 8:
+            dtype = np.uint8 if unsigned else np.int8
+        elif bits == 16:
+            dtype = np.uint16 if unsigned else np.int16
+        elif bits == 32:
+            dtype = np.uint32 if unsigned else np.int32
+        elif bits == 64:
+            dtype = np.uint64 if unsigned else np.int64
+        else:
+            raise ValueError(f"Unsupported bits per sample: {bits}")
+
+        raw_data = np.fromfile(out_bin, dtype=dtype)
 
         data = raw_data.reshape((S, C), order='F')
 
@@ -212,7 +219,7 @@ def expand_ephys(fullfilename):
         with tarfile.open(fullfilename, "r:gz") as tar:
              nbh_member = None
              for member in tar.getmembers():
-                 if member.name.endswith('.nbh'):
+                 if member.name.endswith('.nbh') and not os.path.basename(member.name).startswith('._'):
                      nbh_member = member
                      break
              if not nbh_member:
@@ -286,7 +293,7 @@ def expand_time(fullfilename):
         with tarfile.open(fullfilename, "r:gz") as tar:
              nbh_member = None
              for member in tar.getmembers():
-                 if member.name.endswith('.nbh'):
+                 if member.name.endswith('.nbh') and not os.path.basename(member.name).startswith('._'):
                      nbh_member = member
                      break
              if not nbh_member:

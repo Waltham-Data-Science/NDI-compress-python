@@ -5,9 +5,7 @@ import shutil
 import json
 import sys
 
-# Add parent dir to path to import ndi_compress
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-import ndi_compress
+import ndicompress as ndi_compress
 
 class TestNDICompress(unittest.TestCase):
     def setUp(self):
