@@ -5,9 +5,15 @@ import shutil
 import json
 import sys
 
-# Add parent dir to path to import ndi_compress
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-import ndi_compress
+import ndicompress as ndi_compress
+from ndicompress.utility import get_executable_path
+
+def has_compressor(name):
+    try:
+        get_executable_path(name)
+        return True
+    except FileNotFoundError:
+        return False
 
 class TestNDICompress(unittest.TestCase):
     def setUp(self):
@@ -21,6 +27,7 @@ class TestNDICompress(unittest.TestCase):
                 except OSError:
                     pass
 
+    @unittest.skipUnless(has_compressor("ndi_compress_digital"), "ndi_compress_digital not found")
     def test_digital(self):
         S, C = 100, 10
         data = np.random.randint(0, 2, size=(S, C)).astype(np.uint8)
@@ -38,6 +45,7 @@ class TestNDICompress(unittest.TestCase):
         self.assertEqual(data_out.shape, (S, C))
         self.assertEqual(data_out.dtype, np.uint8)
 
+    @unittest.skipUnless(has_compressor("ndi_compress_ephys"), "ndi_compress_ephys not found")
     def test_ephys(self):
         S, C = 1000, 4
         t = np.linspace(0, 10, S)
@@ -59,6 +67,7 @@ class TestNDICompress(unittest.TestCase):
         self.assertLess(max_diff, 1e-7)
         self.assertEqual(data_out.shape, (S, C))
 
+    @unittest.skipUnless(has_compressor("ndi_compress_time"), "ndi_compress_time not found")
     def test_time(self):
         S, C = 100, 1
         t = np.linspace(0, 10, S)
@@ -78,6 +87,7 @@ class TestNDICompress(unittest.TestCase):
         self.assertLess(max_diff, 1e-7)
         self.assertEqual(data_out.shape, (S, C))
 
+    @unittest.skipUnless(has_compressor("ndi_compress_metadata"), "ndi_compress_metadata not found")
     def test_metadata(self):
         data = {"key": "value", "list": [1, 2, 3]}
         filename = "test_metadata"
@@ -89,6 +99,7 @@ class TestNDICompress(unittest.TestCase):
         data_out = ndi_compress.expand_metadata(filename + ".nbf.tgz")
         self.assertEqual(data, data_out)
 
+    @unittest.skipUnless(has_compressor("ndi_compress_eventmarktext"), "ndi_compress_eventmarktext not found")
     def test_eventmarktext(self):
         ct = ["event", "marker", "text"]
         ch = [1, 1, 1]
