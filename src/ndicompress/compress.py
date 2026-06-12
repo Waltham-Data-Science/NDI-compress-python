@@ -13,7 +13,23 @@ from .utility import get_executable_path
 # Maximum seconds to wait for a codec subprocess before treating it as hung.
 # Compression/decompression of very large arrays can be slow, so this default is
 # generous; override via the NDI_COMPRESS_TIMEOUT environment variable.
-_C_EXEC_TIMEOUT = float(os.environ.get("NDI_COMPRESS_TIMEOUT", "300"))
+def _read_timeout_env(default=300.0):
+    raw = os.environ.get("NDI_COMPRESS_TIMEOUT")
+    if raw is None or raw == "":
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        import warnings
+
+        warnings.warn(
+            f"Invalid NDI_COMPRESS_TIMEOUT={raw!r}; using default {default:g}s.",
+            RuntimeWarning,
+        )
+        return default
+
+
+_C_EXEC_TIMEOUT = _read_timeout_env()
 
 
 def _call_c_exec(exec_name, args):

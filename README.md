@@ -21,6 +21,11 @@ This package requires the NDI compression C executables to be present.
 By default, it looks for them in `../../C/bin` relative to the `ndi_compress` package file.
 You can override this by setting the `NDI_BIN_PATH` environment variable.
 
+Each codec executable runs in a subprocess with a timeout (default 300 seconds)
+so a hung or looping codec process cannot block indefinitely. Override it with
+the `NDI_COMPRESS_TIMEOUT` environment variable (in seconds); an invalid value
+falls back to the default with a warning.
+
 ```python
 import ndi_compress
 import numpy as np
