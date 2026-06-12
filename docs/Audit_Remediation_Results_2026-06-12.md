@@ -1,5 +1,10 @@
 # NDI-compress-python Audit Remediation — Results (2026-06-12)
 
+> **Context for a reviewer / next agent.** One of **9 coordinated PRs** in the 2026-06 NDI
+> ecosystem audit; **none are merged.** This repo's PR: **Waltham-Data-Science/NDI-compress-python#2**.
+> Done here: subprocess timeout + LICENSE. **Deferred:** codec provenance/checksums + a
+> cross-language round-trip test (needs the codec source + a paired MATLAB run) — see below.
+
 Branch `audit/ndi-compress-python-2026-06`, off `origin/main`.
 
 ## Findings addressed (audit §6.2-7, §6.2-8)
