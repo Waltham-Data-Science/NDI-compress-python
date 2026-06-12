@@ -10,10 +10,23 @@ from .header import read_ndi_header
 
 from .utility import get_executable_path
 
+# Maximum seconds to wait for a codec subprocess before treating it as hung.
+# Compression/decompression of very large arrays can be slow, so this default is
+# generous; override via the NDI_COMPRESS_TIMEOUT environment variable.
+_C_EXEC_TIMEOUT = float(os.environ.get("NDI_COMPRESS_TIMEOUT", "300"))
+
+
 def _call_c_exec(exec_name, args):
     exec_path = get_executable_path(exec_name)
     cmd = [exec_path] + args
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=_C_EXEC_TIMEOUT
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"C executable {exec_name} timed out after {_C_EXEC_TIMEOUT:g}s"
+        ) from exc
     if result.returncode != 0:
         raise RuntimeError(f"C executable {exec_name} failed: {result.stderr}")
     return result.stdout
