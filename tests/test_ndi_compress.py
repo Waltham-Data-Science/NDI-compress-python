@@ -120,6 +120,36 @@ class TestNDICompress(unittest.TestCase):
         data_out, _, _ = ndi_compress.expand_digital(filename + ".nbf.tgz")
         self.assertTrue(np.array_equal(data.astype(np.uint8), data_out))
 
+    def test_1d_input_digital(self):
+        data = np.random.randint(0, 2, size=(1000,)).astype(np.uint8)
+        filename = "test_1d_digital"
+        self.files_to_remove.append(filename + ".nbf.tgz")
+        ndi_compress.compress_digital(data, filename)
+        out, _, _ = ndi_compress.expand_digital(filename + ".nbf.tgz")
+        self.assertEqual(out.shape, (1000, 1))
+        self.assertTrue(np.array_equal(data[:, np.newaxis], out))
+
+    def test_1d_input_ephys(self):
+        data = (np.sin(np.linspace(0, 10, 1000)) * 1000).astype(np.int16)
+        filename = "test_1d_ephys"
+        self.files_to_remove.append(filename + ".nbf.tgz")
+        ndi_compress.compress_ephys(data, filename)
+        out, _ = ndi_compress.expand_ephys(filename + ".nbf.tgz")
+        self.assertEqual(out.shape, (1000, 1))
+
+    def test_1d_input_time(self):
+        data = np.linspace(0, 10, 1000)
+        filename = "test_1d_time"
+        self.files_to_remove.append(filename + ".nbf.tgz")
+        ndi_compress.compress_time(data, filename)
+        out = ndi_compress.expand_time(filename + ".nbf.tgz")
+        self.assertEqual(out.shape, (1000, 1))
+
+    def test_3d_input_named_error(self):
+        data = np.zeros((2, 3, 4), dtype=np.uint8)
+        with self.assertRaises(ValueError):
+            ndi_compress.compress_digital(data, "test_3d_digital")
+
     def test_metadata(self):
         data = {"key": "value", "list": [1, 2, 3]}
         filename = "test_metadata"

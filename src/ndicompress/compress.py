@@ -17,31 +17,45 @@ def _read_timeout_env(default=300.0):
     raw = os.environ.get("NDI_COMPRESS_TIMEOUT")
     if raw is None or raw == "":
         return default
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        import warnings
+    import warnings
 
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
         warnings.warn(
             f"Invalid NDI_COMPRESS_TIMEOUT={raw!r}; using default {default:g}s.",
             RuntimeWarning,
         )
         return default
-
-
-_C_EXEC_TIMEOUT = _read_timeout_env()
+    if value <= 0:
+        # subprocess.run treats timeout<=0 as an already-expired deadline, so
+        # every codec call would raise TimeoutExpired immediately. Reject
+        # non-positive values through the same warn-and-default path (0 is the
+        # 'no timeout' convention in curl/requests, but subprocess has no such
+        # sentinel).
+        warnings.warn(
+            f"Non-positive NDI_COMPRESS_TIMEOUT={raw!r}; using default "
+            f"{default:g}s.",
+            RuntimeWarning,
+        )
+        return default
+    return value
 
 
 def _call_c_exec(exec_name, args):
+    # Resolve the timeout per call so NDI_COMPRESS_TIMEOUT can be changed at
+    # runtime (e.g. from a notebook) after `import ndicompress`, rather than
+    # being frozen at import time.
+    timeout = _read_timeout_env()
     exec_path = get_executable_path(exec_name)
     cmd = [exec_path] + args
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=_C_EXEC_TIMEOUT
+            cmd, capture_output=True, text=True, timeout=timeout
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(
-            f"C executable {exec_name} timed out after {_C_EXEC_TIMEOUT:g}s"
+            f"C executable {exec_name} timed out after {timeout:g}s"
         ) from exc
     if result.returncode != 0:
         raise RuntimeError(f"C executable {exec_name} failed: {result.stderr}")
@@ -90,6 +104,17 @@ def _write_temp_bin_json(data, temp_dir):
     # Ensure data is numpy array
     if not isinstance(data, np.ndarray):
         data = np.array(data)
+
+    # Accept 1-D input uniformly across all codecs by promoting to (S, 1);
+    # previously only compress_time did this, so compress_digital/compress_ephys
+    # raised a cryptic "not enough values to unpack" on flat vectors.
+    if data.ndim == 1:
+        data = data[:, np.newaxis]
+    elif data.ndim != 2:
+        raise ValueError(
+            f"Expected 1-D or 2-D input, got {data.ndim}-D array with shape "
+            f"{data.shape}."
+        )
 
     bin_path = os.path.join(temp_dir, "input.bin")
     json_path = os.path.join(temp_dir, "input.json")
