@@ -3,6 +3,12 @@ import platform
 import os
 
 def get_binary_path():
+    # Allow pointing at a locally rebuilt codec via NDI_BIN_PATH; otherwise use
+    # the vendored binaries shipped under bin/<platform> next to this file.
+    override = os.environ.get("NDI_BIN_PATH")
+    if override:
+        return override
+
     system = platform.system().lower()
     if system == "linux":
         dirname = "linux"
