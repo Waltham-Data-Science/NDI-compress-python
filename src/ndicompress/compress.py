@@ -118,7 +118,11 @@ def compress_digital(data, fullfilename):
     ----------
     data : numpy.ndarray
         Shape (S, C), where S is samples and C is channels.
-        Should contain 0s and 1s.
+        Must contain only 0s and 1s (or be a boolean array); any other value
+        raises ValueError. This is a binary write path only -- there is no
+        16-bit digital encoder. expand_digital's >8-bit (16/32/64-bit) branch
+        is decode-only and consumes method-21 files produced by the MATLAB
+        codec; the Python API cannot write them.
     fullfilename : str
         Output filename base (without .nbf.tgz extension).
 
@@ -133,6 +137,19 @@ def compress_digital(data, fullfilename):
     """
     if not isinstance(data, np.ndarray):
         data = np.array(data)
+
+    # Reject non-binary input rather than silently collapsing every nonzero
+    # sample to 1. bool is unambiguous (True/False -> 1/0) and always allowed.
+    # There is NO 16-bit digital write path: expand_digital's >8-bit branch is
+    # decode-only, so binarizing 16-bit method-21 data here would make
+    # compress-then-expand non-identity with no error.
+    if data.dtype != np.bool_ and np.any((data != 0) & (data != 1)):
+        raise ValueError(
+            "compress_digital requires binary input (values in {0, 1}) or a "
+            "boolean array; received other values. There is no 16-bit digital "
+            "write path in this API (expand_digital's >8-bit branch is "
+            "decode-only)."
+        )
 
     # Ensure uint8 (0 or 1)
     data = (data != 0).astype(np.uint8)
@@ -235,6 +252,27 @@ def compress_ephys(data, fullfilename):
     """
     if not isinstance(data, np.ndarray):
         data = np.array(data)
+
+    # int16 is the NBF-native ephys dtype; refuse a lossy narrowing rather than
+    # silently truncating (floats) or wrapping (out-of-range ints). Ported from
+    # ndi-curation-studio's range guard, with an added integrality check the
+    # source guard lacks (it is range-only and lets float volts slip through).
+    info = np.iinfo(np.int16)
+    if np.issubdtype(data.dtype, np.floating):
+        # astype(int16) truncates toward zero with no warning; reject any
+        # non-integral value (this also rejects NaN, which is never integral).
+        if not np.all(data == np.trunc(data)):
+            raise ValueError(
+                "compress_ephys requires integer-valued input; received "
+                "non-integral float samples that astype(int16) would silently "
+                "truncate. Scale/quantize to integers before compressing."
+            )
+    if data.size and (np.min(data) < info.min or np.max(data) > info.max):
+        # astype(int16) wraps out-of-range integers, inverting spike polarity.
+        raise ValueError(
+            f"compress_ephys input exceeds int16 range [{info.min}, {info.max}] "
+            f"(min={np.min(data)}, max={np.max(data)})."
+        )
 
     # C executable expects int16 binary input
     data_int16 = data.astype(np.int16)
