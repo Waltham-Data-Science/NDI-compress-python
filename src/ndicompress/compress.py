@@ -47,6 +47,41 @@ def _call_c_exec(exec_name, args):
         raise RuntimeError(f"C executable {exec_name} failed: {result.stderr}")
     return result.stdout
 
+def _extract_header(tarpath, temp_dir):
+    """
+    Safely extract and parse the .nbh header from a .nbf.tgz archive.
+
+    The archive member name is attacker-controllable, so we never hand it to
+    the filesystem. A member named ``../../x.nbh`` passed to ``tar.extract``
+    would escape ``temp_dir`` (a path-traversal write). Instead we stream the
+    header bytes with ``tar.extractfile()`` and write them to a fixed,
+    controlled path inside ``temp_dir``.
+
+    We deliberately do NOT use ``tar.extract(..., filter='data')``: the
+    ``filter=`` keyword is unavailable across the supported interpreter range
+    (requires-python >= 3.7), so ``extractfile()`` + a fixed filename is the
+    portable fix.
+    """
+    with tarfile.open(tarpath, "r:gz") as tar:
+        nbh_member = None
+        for member in tar.getmembers():
+            if member.name.endswith('.nbh') and not os.path.basename(member.name).startswith('._'):
+                nbh_member = member
+                break
+        if nbh_member is None:
+            raise ValueError("No .nbh file found in archive")
+
+        extracted = tar.extractfile(nbh_member)
+        if extracted is None:
+            raise ValueError("Could not read .nbh member from archive")
+        header_bytes = extracted.read()
+
+    nbh_path = os.path.join(temp_dir, "header.nbh")
+    with open(nbh_path, "wb") as f:
+        f.write(header_bytes)
+
+    return read_ndi_header(nbh_path)
+
 def _write_temp_bin_json(data, temp_dir):
     """
     Writes data to a temporary .bin file and dimensions to a .json file.
@@ -139,22 +174,8 @@ def expand_digital(fullfilename):
             fullfilename += '.nbf.tgz'
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        # Extract .nbh file
-        with tarfile.open(fullfilename, "r:gz") as tar:
-             # Find .nbh file
-             nbh_member = None
-             for member in tar.getmembers():
-                 if member.name.endswith('.nbh') and not os.path.basename(member.name).startswith('._'):
-                     nbh_member = member
-                     break
-             if not nbh_member:
-                 raise ValueError("No .nbh file found in archive")
-
-             tar.extract(nbh_member, path=temp_dir)
-             nbh_path = os.path.join(temp_dir, nbh_member.name)
-
-             # Parse header
-             params = read_ndi_header(nbh_path)
+        # Extract .nbh file (traversal-safe: header bytes only, fixed dest name)
+        params = _extract_header(fullfilename, temp_dir)
 
         # 2. Call Uncompress
         # Usage: ndi_uncompress_digital <input> <output>
@@ -244,18 +265,8 @@ def expand_ephys(fullfilename):
              fullfilename += '.nbf.tgz'
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        # Extract .nbh file
-        with tarfile.open(fullfilename, "r:gz") as tar:
-             nbh_member = None
-             for member in tar.getmembers():
-                 if member.name.endswith('.nbh') and not os.path.basename(member.name).startswith('._'):
-                     nbh_member = member
-                     break
-             if not nbh_member:
-                 raise ValueError("No .nbh file found")
-             tar.extract(nbh_member, path=temp_dir)
-             nbh_path = os.path.join(temp_dir, nbh_member.name)
-             params = read_ndi_header(nbh_path)
+        # Extract .nbh file (traversal-safe: header bytes only, fixed dest name)
+        params = _extract_header(fullfilename, temp_dir)
 
         out_bin = os.path.join(temp_dir, "output.bin")
         _call_c_exec("ndi_uncompress_ephys", [fullfilename, out_bin])
@@ -319,17 +330,8 @@ def expand_time(fullfilename):
              fullfilename += '.nbf.tgz'
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        with tarfile.open(fullfilename, "r:gz") as tar:
-             nbh_member = None
-             for member in tar.getmembers():
-                 if member.name.endswith('.nbh') and not os.path.basename(member.name).startswith('._'):
-                     nbh_member = member
-                     break
-             if not nbh_member:
-                 raise ValueError("No .nbh file found")
-             tar.extract(nbh_member, path=temp_dir)
-             nbh_path = os.path.join(temp_dir, nbh_member.name)
-             params = read_ndi_header(nbh_path)
+        # Extract .nbh file (traversal-safe: header bytes only, fixed dest name)
+        params = _extract_header(fullfilename, temp_dir)
 
         out_bin = os.path.join(temp_dir, "output.bin")
         _call_c_exec("ndi_uncompress_time", [fullfilename, out_bin])
