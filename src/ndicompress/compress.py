@@ -211,9 +211,19 @@ def expand_digital(fullfilename):
         file_size = os.path.getsize(out_bin)
         expected_size = S * C * (bits // 8)
 
-        if file_size != expected_size and file_size == S * C:
-            # Fallback: Binary produced 8-bit data despite header indicating otherwise
-            bits = 8
+        if file_size != expected_size:
+            # Previously this silently forced bits=8 when the decoder emitted
+            # S*C bytes despite a >8-bit header, turning a detectable decoder
+            # defect into bit-unpacked garbage returned as if correct. Fail
+            # loudly instead: the 16-bit method-21 decoder is known-wrong and
+            # its fix lives in the (absent) codec source.
+            raise ValueError(
+                f"expand_digital: decoded payload size {file_size} bytes does "
+                f"not match expected {expected_size} bytes for header "
+                f"bits_per_sample={bits}, shape=({S}, {C}). The codec output "
+                f"is inconsistent with the header (likely the 16-bit method-21 "
+                f"decoder defect); refusing to return corrupted data."
+            )
 
         if bits == 8:
             dtype = np.uint8 if unsigned else np.int8
