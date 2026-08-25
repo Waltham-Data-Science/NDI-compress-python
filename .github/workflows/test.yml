@@ -10,6 +10,11 @@ jobs:
   test:
     runs-on: ${{ matrix.os }}
     strategy:
+      # The matrix exists to answer "which platforms work?", so every leg must
+      # report. With fail-fast on, the first Windows failure cancelled the
+      # still-running macOS legs and `gh pr checks` rendered those cancellations
+      # as "fail" — making two green platforms look broken.
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         # Widened beyond 3.10 to prove the tarfile portability fix
