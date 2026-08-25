@@ -2,6 +2,7 @@ import unittest
 import numpy as np
 import os
 import json
+import pytest
 import ndicompress as ndi_compress
 
 # Path to example data
@@ -30,7 +31,17 @@ class TestExampleData(unittest.TestCase):
         # Compare
         np.testing.assert_array_equal(data_out, expected_data)
 
-    @unittest.skip("Example data mismatch: data_binary.nbf.tgz content does not match data_binary.bin")
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "16-bit method-21 digital decoder is wrong: the fixture "
+            "data_binary.nbf.tgz payload IS byte-identical to data_binary.bin "
+            "(the old skip reason was false); the C decoder emits 1000 bytes "
+            "instead of 2000, so expand_digital now raises on the size "
+            "mismatch. Fix lives in the (absent) codec source; when repaired "
+            "this xpasses and flips this test red."
+        ),
+    )
     def test_expand_digital_int16(self):
         # Maps to data_binary
         filename = os.path.join(EXAMPLE_DATA_DIR, "data_binary.nbf.tgz")
@@ -47,6 +58,18 @@ class TestExampleData(unittest.TestCase):
         data_out, _, _ = ndi_compress.expand_digital(filename)
 
         np.testing.assert_array_equal(data_out, expected_data)
+
+    def test_expand_digital_raises_on_size_mismatch(self):
+        # The 16-bit method-21 payload decodes to 1000 bytes but the header
+        # (bits_per_sample=16, shape 100x10) implies 2000; expand_digital must
+        # raise a ValueError naming both sizes rather than silently forcing
+        # bits=8 and returning bit-unpacked garbage.
+        filename = os.path.join(EXAMPLE_DATA_DIR, "data_binary.nbf.tgz")
+        with self.assertRaises(ValueError) as ctx:
+            ndi_compress.expand_digital(filename)
+        msg = str(ctx.exception)
+        self.assertIn("1000", msg)
+        self.assertIn("2000", msg)
 
     def test_expand_time(self):
         filename = os.path.join(EXAMPLE_DATA_DIR, "data_time.nbf.tgz")
@@ -101,6 +124,46 @@ class TestExampleData(unittest.TestCase):
             np.testing.assert_allclose(t1, t2, rtol=1e-10)
 
         self.assertEqual(D_out, expected_full['D'])
+
+class TestRoundTripIdentity(unittest.TestCase):
+    """compress-then-expand fidelity per codec (previously uncovered)."""
+
+    def setUp(self):
+        self.files_to_remove = []
+
+    def tearDown(self):
+        for f in self.files_to_remove:
+            if os.path.exists(f):
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
+
+    def test_roundtrip_digital(self):
+        data = np.random.randint(0, 2, size=(120, 8)).astype(np.uint8)
+        filename = "rt_digital"
+        self.files_to_remove.append(filename + ".nbf.tgz")
+        ndi_compress.compress_digital(data, filename)
+        out, _, _ = ndi_compress.expand_digital(filename + ".nbf.tgz")
+        np.testing.assert_array_equal(out, data)
+
+    def test_roundtrip_ephys(self):
+        col = (np.sin(np.linspace(0, 10, 500)) * 1000).astype(np.int16)
+        data = np.column_stack([col, col[::-1]])
+        filename = "rt_ephys"
+        self.files_to_remove.append(filename + ".nbf.tgz")
+        ndi_compress.compress_ephys(data, filename)
+        out, _ = ndi_compress.expand_ephys(filename + ".nbf.tgz")
+        np.testing.assert_allclose(out, data.astype(np.float64), atol=1e-7)
+
+    def test_roundtrip_time(self):
+        data = np.linspace(0, 5, 300)[:, np.newaxis]
+        filename = "rt_time"
+        self.files_to_remove.append(filename + ".nbf.tgz")
+        ndi_compress.compress_time(data, filename)
+        out = ndi_compress.expand_time(filename + ".nbf.tgz")
+        np.testing.assert_allclose(out, data, atol=1e-9)
+
 
 if __name__ == '__main__':
     unittest.main()

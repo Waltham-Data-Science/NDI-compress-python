@@ -76,6 +76,80 @@ class TestNDICompress(unittest.TestCase):
         self.assertLess(max_diff, 1e-7)
         self.assertEqual(data_out.shape, (S, C))
 
+    def test_ephys_rejects_float_volts(self):
+        # Scaled float64 volts (typical ephys amplitudes) must not be silently
+        # truncated to zeros by astype(int16).
+        data = np.linspace(-0.08, 0.04, 1000).reshape(-1, 1)
+        self.assertEqual(data.dtype, np.float64)
+        with self.assertRaises(ValueError):
+            ndi_compress.compress_ephys(data, "test_ephys_float")
+
+    def test_ephys_rejects_out_of_int16_range(self):
+        # int32 values outside [-32768, 32767] would wrap and invert polarity.
+        data = np.array([[40000, 70000, -40000]], dtype=np.int32)
+        with self.assertRaises(ValueError):
+            ndi_compress.compress_ephys(data, "test_ephys_oor")
+
+    def test_ephys_accepts_exact_integral_in_range(self):
+        # Positive case: exact-integral, in-range int16 input is accepted and
+        # round-trips.
+        S, C = 200, 2
+        t = np.linspace(0, 10, S)
+        col = (np.sin(t) * 1000).astype(np.int16)
+        data = np.column_stack([col] * C)
+        filename = "test_ephys_ok"
+        self.files_to_remove.append(filename + ".nbf.tgz")
+
+        ratio, _, _, _ = ndi_compress.compress_ephys(data, filename)
+        self.assertIsInstance(ratio, float)
+        data_out, _ = ndi_compress.expand_ephys(filename + ".nbf.tgz")
+        self.assertLess(np.max(np.abs(data.astype(np.float64) - data_out)), 1e-7)
+
+    def test_compress_digital_rejects_non_binary(self):
+        data = np.array([[0, 2, 5]], dtype=np.uint8)
+        with self.assertRaises(ValueError):
+            ndi_compress.compress_digital(data, "test_digital_nonbinary")
+
+    def test_compress_digital_accepts_bool(self):
+        data = np.array([[True, False, True], [False, True, False]], dtype=bool)
+        filename = "test_digital_bool"
+        self.files_to_remove.append(filename + ".nbf.tgz")
+
+        ratio, _, _ = ndi_compress.compress_digital(data, filename)
+        self.assertIsInstance(ratio, float)
+        data_out, _, _ = ndi_compress.expand_digital(filename + ".nbf.tgz")
+        self.assertTrue(np.array_equal(data.astype(np.uint8), data_out))
+
+    def test_1d_input_digital(self):
+        data = np.random.randint(0, 2, size=(1000,)).astype(np.uint8)
+        filename = "test_1d_digital"
+        self.files_to_remove.append(filename + ".nbf.tgz")
+        ndi_compress.compress_digital(data, filename)
+        out, _, _ = ndi_compress.expand_digital(filename + ".nbf.tgz")
+        self.assertEqual(out.shape, (1000, 1))
+        self.assertTrue(np.array_equal(data[:, np.newaxis], out))
+
+    def test_1d_input_ephys(self):
+        data = (np.sin(np.linspace(0, 10, 1000)) * 1000).astype(np.int16)
+        filename = "test_1d_ephys"
+        self.files_to_remove.append(filename + ".nbf.tgz")
+        ndi_compress.compress_ephys(data, filename)
+        out, _ = ndi_compress.expand_ephys(filename + ".nbf.tgz")
+        self.assertEqual(out.shape, (1000, 1))
+
+    def test_1d_input_time(self):
+        data = np.linspace(0, 10, 1000)
+        filename = "test_1d_time"
+        self.files_to_remove.append(filename + ".nbf.tgz")
+        ndi_compress.compress_time(data, filename)
+        out = ndi_compress.expand_time(filename + ".nbf.tgz")
+        self.assertEqual(out.shape, (1000, 1))
+
+    def test_3d_input_named_error(self):
+        data = np.zeros((2, 3, 4), dtype=np.uint8)
+        with self.assertRaises(ValueError):
+            ndi_compress.compress_digital(data, "test_3d_digital")
+
     def test_metadata(self):
         data = {"key": "value", "list": [1, 2, 3]}
         filename = "test_metadata"

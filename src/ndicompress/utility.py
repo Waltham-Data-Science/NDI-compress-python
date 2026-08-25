@@ -3,6 +3,12 @@ import platform
 import os
 
 def get_binary_path():
+    # Allow pointing at a locally rebuilt codec via NDI_BIN_PATH; otherwise use
+    # the vendored binaries shipped under bin/<platform> next to this file.
+    override = os.environ.get("NDI_BIN_PATH")
+    if override:
+        return override
+
     system = platform.system().lower()
     if system == "linux":
         dirname = "linux"
@@ -22,17 +28,17 @@ def get_executable_path(exec_name):
     bin_path = get_binary_path()
     exec_path = os.path.join(bin_path, exec_name)
 
-    if platform.system().lower() == "windows":
-        if not exec_path.endswith(".exe"):
-            path_exe = exec_path + ".exe"
-            # If exec_path doesn't exist but .exe does, use that
-            # Or just append .exe always if on windows?
-            # The previous code checked: if not path.endswith('.exe') ... if os.path.exists(path_exe)
-            # But normally we just want to run it.
-            # I'll stick to appending .exe if missing.
-            exec_path = path_exe
+    # Candidates in preference order. The vendored Windows codecs all ship as
+    # `<name>.exe`, so that is tried first; but NDI_BIN_PATH exists precisely to
+    # point at a locally rebuilt codec, which need not carry the extension, so
+    # the exact name remains a fallback. Appending `.exe` unconditionally made
+    # the override unusable on Windows and reported a path the caller never named.
+    candidates = [exec_path]
+    if platform.system().lower() == "windows" and not exec_path.endswith(".exe"):
+        candidates.insert(0, exec_path + ".exe")
 
-    if not os.path.exists(exec_path):
-        raise FileNotFoundError(f"Executable not found: {exec_path}")
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
 
-    return exec_path
+    raise FileNotFoundError("Executable not found: " + " or ".join(candidates))
