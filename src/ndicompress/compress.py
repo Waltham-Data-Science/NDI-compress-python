@@ -165,16 +165,31 @@ def expand_digital(fullfilename):
 
         return data, None, params
 
-def compress_ephys(data, fullfilename):
+def compress_ephys(data, fullfilename, *, output_size_bits=None,
+                   data_is_unsigned=None, data_format=None):
     """
     Compress ephys data.
+
+    Mirrors MATLAB's ndi.compress.compress_ephys(D, OUTPUT_SIZE_BITS,
+    FULLFILENAME, 'data_is_unsigned', ..., 'data_format', ...).
 
     Parameters
     ----------
     data : numpy.ndarray
-        Shape (S, C). Should be convertible to int16.
+        Shape (S, C), where S is samples and C is channels.
     fullfilename : str
         Output filename base.
+    output_size_bits : int, optional
+        Bits per sample recorded as the original sample size (MATLAB's
+        OUTPUT_SIZE_BITS). Defaults to the size of the input samples.
+    data_is_unsigned : bool, optional
+        Whether the samples are unsigned. Defaults to the signedness of an
+        integer dtype.
+    data_format : {'integer', 'float'}, optional
+        'integer' predicts and stores integer samples; 'float' stores 64-bit
+        floats as MATLAB's float path does. Defaults to 'integer' for integer
+        dtypes. When no format is given and ``data`` is not an integer array,
+        it is converted to int16, as this function always did.
 
     Returns
     -------
@@ -186,19 +201,83 @@ def compress_ephys(data, fullfilename):
     if not isinstance(data, np.ndarray):
         data = np.array(data)
 
-    # C executable expects int16 binary input
-    data_int16 = data.astype(np.int16)
+    if data_format is None:
+        if np.issubdtype(data.dtype, np.integer):
+            data_format = 'integer'
+        else:
+            # what this function always did with non-integer input
+            data = data.astype(np.int16)
+            data_format = 'integer'
+    if data_format not in ('integer', 'float'):
+        raise ValueError("data_format must be 'integer' or 'float'")
+
+    if data_format == 'float':
+        if data.dtype not in (np.float32, np.float64):
+            data = data.astype(np.float64)
+        if data_is_unsigned is None:
+            data_is_unsigned = False
+    else:
+        if not np.issubdtype(data.dtype, np.integer):
+            raise TypeError("data_format 'integer' requires an integer array; "
+                            "convert scaled data first (see scaled2underlying)")
+        if data_is_unsigned is None:
+            data_is_unsigned = np.issubdtype(data.dtype, np.unsignedinteger)
+
+    data_bits = data.dtype.itemsize * 8
+    if output_size_bits is None:
+        output_size_bits = data_bits
+
     in_size = data.nbytes
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        bin_path = _write_temp_bin_json(data_int16, temp_dir)
+        bin_path = _write_temp_bin_json(data, temp_dir)
+        json_path = os.path.join(temp_dir, "input.json")
+        with open(json_path) as f:
+            header = json.load(f)
+        header.update({
+            "data_format": data_format,
+            "data_is_unsigned": bool(data_is_unsigned),
+            "data_bits_per_sample": int(data_bits),
+            "output_size_bits": int(output_size_bits),
+        })
+        with open(json_path, 'w') as f:
+            json.dump(header, f)
         _call_c_exec("ndi_compress_ephys", [bin_path, fullfilename])
 
     outfile = fullfilename + ".nbf.tgz"
+    _check_ephys_header(outfile, data_format, data_is_unsigned, output_size_bits)
     out_size = os.path.getsize(outfile) if os.path.exists(outfile) else 0
     ratio = float(out_size) / float(in_size) if in_size > 0 else 0.0
 
     return ratio, None, None, None
+
+
+def _check_ephys_header(outfile, data_format, data_is_unsigned, output_size_bits):
+    """Raise if the encoder did not record the requested format.
+
+    An ndi_compress_ephys built before the data-format keys existed ignores
+    them and stores the samples as signed 16-bit integers; this catches a
+    stale binary instead of letting it write wrong data.
+    """
+    with tempfile.TemporaryDirectory() as temp_dir:
+        with tarfile.open(outfile, "r:gz") as tar:
+            member = next((m for m in tar.getmembers() if m.name.endswith('.nbh')
+                           and not os.path.basename(m.name).startswith('._')), None)
+            if member is None:
+                raise ValueError("No .nbh file found")
+            tar.extract(member, path=temp_dir)
+        params = read_ndi_header(os.path.join(temp_dir, member.name))
+    expected_format = 2 if data_format == 'float' else 1
+    got = (params.get('original_format'), params.get('original_isunsigned'),
+           params.get('original_bits_per_sample'))
+    want = (expected_format, int(bool(data_is_unsigned)), int(output_size_bits))
+    if tuple(int(g) for g in got) != want:
+        os.remove(outfile)
+        raise RuntimeError(
+            "ndi_compress_ephys wrote (original_format, original_isunsigned, "
+            f"original_bits_per_sample) = {got}, not the requested {want}; "
+            "the ndi_compress_ephys binary predates the data format options "
+            "and must be updated.")
 
 def expand_ephys(fullfilename):
     """
