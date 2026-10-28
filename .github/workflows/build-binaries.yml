@@ -11,6 +11,11 @@ name: Build binaries from NDI-compress
 #     Run workflow), optionally naming a branch, tag or commit; the file is
 #     updated to the commit that was built.
 #
+# NDI-compress is private, and a workflow's own GITHUB_TOKEN can read only this
+# repository, so the build needs a repository secret NDI_COMPRESS_TOKEN: a
+# fine-grained personal access token (or GitHub App token) with read-only
+# "Contents" access to Waltham-Data-Science/NDI-compress.
+#
 # The commit is made with GITHUB_TOKEN, so it does not trigger other workflows
 # (test.yml): the tests that matter run here, on the new binaries, before
 # anything is committed.
@@ -45,12 +50,17 @@ jobs:
         shell: bash
         env:
           INPUT_REF: ${{ github.event.inputs.ndi_compress_ref }}
+          NDI_COMPRESS_TOKEN: ${{ secrets.NDI_COMPRESS_TOKEN }}
         run: |
+          if [[ -z "$NDI_COMPRESS_TOKEN" ]]; then
+            echo "::error::The repository secret NDI_COMPRESS_TOKEN is not set. NDI-compress is private: add a token with read-only Contents access to Waltham-Data-Science/NDI-compress (Settings > Secrets and variables > Actions)."
+            exit 1
+          fi
           ref="${INPUT_REF:-$(tr -d '[:space:]' < ndi-compress-ref.txt)}"
           if [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
             sha="$ref"
           else
-            sha=$(git ls-remote https://github.com/Waltham-Data-Science/NDI-compress.git \
+            sha=$(git ls-remote "https://x-access-token:${NDI_COMPRESS_TOKEN}@github.com/Waltham-Data-Science/NDI-compress.git" \
                   "refs/heads/$ref" "refs/tags/$ref" | head -n1 | cut -f1)
           fi
           if [[ -z "$sha" ]]; then
@@ -93,6 +103,7 @@ jobs:
         with:
           repository: Waltham-Data-Science/NDI-compress
           ref: ${{ needs.resolve.outputs.sha }}
+          token: ${{ secrets.NDI_COMPRESS_TOKEN }}
           path: ndi-compress
 
       - uses: jwlawson/actions-setup-cmake@v2
