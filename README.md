@@ -34,3 +34,18 @@ ndi_compress.compress_digital(data, "my_data")
 # Expand
 data_out, ratio, output_files = ndi_compress.expand_digital("my_data.nbf.tgz")
 ```
+
+## The bundled executables
+
+The compression tools are C programs from
+[NDI-compress](https://github.com/Waltham-Data-Science/NDI-compress). This
+package ships them prebuilt in `src/ndicompress/bin/{linux,macos,windows}`, so
+nothing is compiled on install. `ndi-compress-ref.txt` names the NDI-compress
+commit they were built from.
+
+To update them after NDI-compress changes, either change
+`ndi-compress-ref.txt` to the new commit and push, or run the **Build binaries
+from NDI-compress** workflow (Actions tab), optionally naming a branch, tag or
+commit. The workflow builds the tools on Linux, macOS (universal) and Windows,
+runs this package's tests with them on each, and commits them, with the updated
+`ndi-compress-ref.txt`, to the branch it ran on.
