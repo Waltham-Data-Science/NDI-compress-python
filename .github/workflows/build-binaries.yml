@@ -12,9 +12,11 @@ name: Build binaries from NDI-compress
 #     updated to the commit that was built.
 #
 # NDI-compress is private, and a workflow's own GITHUB_TOKEN can read only this
-# repository, so the build needs a repository secret NDI_COMPRESS_TOKEN: a
-# fine-grained personal access token (or GitHub App token) with read-only
-# "Contents" access to Waltham-Data-Science/NDI-compress.
+# repository, so the build reads NDI-compress with a read-only deploy key: the
+# public key is added to NDI-compress (Settings > Deploy keys, write access
+# off) and the private key is this repository's secret
+# NDI_COMPRESS_DEPLOY_KEY. A deploy key does not expire, belongs to no person,
+# and can read that one repository only.
 #
 # The commit is made with GITHUB_TOKEN, so it does not trigger other workflows
 # (test.yml): the tests that matter run here, on the new binaries, before
@@ -49,28 +51,31 @@ jobs:
       sha: ${{ steps.sha.outputs.sha }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - id: sha
+      - id: ref
         shell: bash
         env:
           INPUT_REF: ${{ github.event.inputs.ndi_compress_ref }}
-          NDI_COMPRESS_TOKEN: ${{ secrets.NDI_COMPRESS_TOKEN }}
+          HAS_KEY: ${{ secrets.NDI_COMPRESS_DEPLOY_KEY != '' }}
         run: |
-          if [[ -z "$NDI_COMPRESS_TOKEN" ]]; then
-            echo "::error::The repository secret NDI_COMPRESS_TOKEN is not set. NDI-compress is private: add a token with read-only Contents access to Waltham-Data-Science/NDI-compress (Settings > Secrets and variables > Actions)."
+          if [[ "$HAS_KEY" != "true" ]]; then
+            echo "::error::The repository secret NDI_COMPRESS_DEPLOY_KEY is not set. NDI-compress is private: add a read-only deploy key to it and put the private key in this secret (see the comment at the top of this workflow)."
             exit 1
           fi
           ref="${INPUT_REF:-$(tr -d '[:space:]' < ndi-compress-ref.txt)}"
-          if [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
-            sha="$ref"
-          else
-            sha=$(git ls-remote "https://x-access-token:${NDI_COMPRESS_TOKEN}@github.com/Waltham-Data-Science/NDI-compress.git" \
-                  "refs/heads/$ref" "refs/tags/$ref" | head -n1 | cut -f1)
-          fi
-          if [[ -z "$sha" ]]; then
-            echo "Could not resolve NDI-compress ref '$ref' (use a branch, tag or full commit hash)." >&2
-            exit 1
-          fi
-          echo "Building NDI-compress $ref = $sha"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+      - name: Check out NDI-compress at that ref
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Waltham-Data-Science/NDI-compress
+          ref: ${{ steps.ref.outputs.ref }}
+          ssh-key: ${{ secrets.NDI_COMPRESS_DEPLOY_KEY }}
+          persist-credentials: false
+          path: ndi-compress
+      - id: sha
+        shell: bash
+        run: |
+          sha=$(git -C ndi-compress rev-parse HEAD)
+          echo "Building NDI-compress ${{ steps.ref.outputs.ref }} = $sha"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
   build:
@@ -106,7 +111,7 @@ jobs:
         with:
           repository: Waltham-Data-Science/NDI-compress
           ref: ${{ needs.resolve.outputs.sha }}
-          token: ${{ secrets.NDI_COMPRESS_TOKEN }}
+          ssh-key: ${{ secrets.NDI_COMPRESS_DEPLOY_KEY }}
           persist-credentials: false
           path: ndi-compress
 

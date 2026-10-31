@@ -51,6 +51,7 @@ commit. The workflow builds the tools on Linux, macOS (universal) and Windows,
 runs this package's tests with them on each, and commits them, with the updated
 `ndi-compress-ref.txt`, to the branch it ran on.
 
-NDI-compress is private, so the workflow needs the repository secret
-`NDI_COMPRESS_TOKEN`: a fine-grained personal access token with read-only
-"Contents" access to Waltham-Data-Science/NDI-compress.
+NDI-compress is private, so the workflow reads it with a read-only deploy key:
+add the public key to NDI-compress (Settings > Deploy keys, without write
+access) and store the private key as this repository's Actions secret
+`NDI_COMPRESS_DEPLOY_KEY`.
