@@ -49,7 +49,9 @@ push, or run the **Build binaries
 from NDI-compress** workflow (Actions tab), optionally naming a branch, tag or
 commit. The workflow builds the tools on Linux, macOS (universal) and Windows,
 runs this package's tests with them on each, and commits them, with the updated
-`ndi-compress-ref.txt`, to the branch it ran on.
+`ndi-compress-ref.txt`, to the branch it ran on. A commit made by a workflow starts no
+other workflow, so afterwards run **Test NDI Compress** on that branch from the
+Actions tab (or push anything) to test the new head.
 
 NDI-compress is private, so the workflow reads it with a read-only deploy key:
 add the public key to NDI-compress (Settings > Deploy keys, without write

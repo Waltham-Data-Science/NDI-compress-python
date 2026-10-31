@@ -5,6 +5,9 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
+  # Run by hand on any branch, e.g. after build-binaries commits new
+  # executables (a commit made by a workflow starts no other workflow).
+  workflow_dispatch:
 
 jobs:
   test:
