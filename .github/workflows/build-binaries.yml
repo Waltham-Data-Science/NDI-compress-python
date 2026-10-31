@@ -1,0 +1,215 @@
+name: Build binaries from NDI-compress
+
+# Builds the NDI compression executables from Waltham-Data-Science/NDI-compress
+# on Linux, macOS (universal: arm64 + x86_64) and Windows, tests this package
+# with them on each platform, and commits them into src/ndicompress/bin/ on the
+# branch the workflow ran on.
+#
+# Which NDI-compress commit to build is recorded in ndi-compress-ref.txt:
+#   - push a change to that file (on any branch) to rebuild from that commit
+#     (a change to this workflow rebuilds too), or
+#   - run this workflow by hand (Actions > Build binaries from NDI-compress >
+#     Run workflow), optionally naming a branch, tag or commit; the file is
+#     updated to the commit that was built.
+#
+# NDI-compress is private, and a workflow's own GITHUB_TOKEN can read only this
+# repository, so the build reads NDI-compress with a read-only deploy key: the
+# public key is added to NDI-compress (Settings > Deploy keys, write access
+# off) and the private key is this repository's secret
+# NDI_COMPRESS_DEPLOY_KEY. A deploy key does not expire, belongs to no person,
+# and can read that one repository only.
+#
+# The commit is made with GITHUB_TOKEN, so it does not trigger other workflows
+# (test.yml): the tests that matter run here, on the new binaries, before
+# anything is committed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ndi_compress_ref:
+        description: "NDI-compress branch, tag or commit to build (blank: the one in ndi-compress-ref.txt)"
+        required: false
+        default: ""
+  push:
+    paths:
+      - ndi-compress-ref.txt
+      - .github/workflows/build-binaries.yml
+
+# Read-only by default; only the commit job can push. Third-party actions are
+# pinned to commits, because whatever runs here ends up in executables that
+# every NDI-python install runs.
+permissions:
+  contents: read
+
+concurrency:
+  group: build-binaries-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Resolve the NDI-compress commit
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - id: ref
+        shell: bash
+        env:
+          INPUT_REF: ${{ github.event.inputs.ndi_compress_ref }}
+          HAS_KEY: ${{ secrets.NDI_COMPRESS_DEPLOY_KEY != '' }}
+        run: |
+          if [[ "$HAS_KEY" != "true" ]]; then
+            echo "::error::The repository secret NDI_COMPRESS_DEPLOY_KEY is not set. NDI-compress is private: add a read-only deploy key to it and put the private key in this secret (see the comment at the top of this workflow)."
+            exit 1
+          fi
+          ref="${INPUT_REF:-$(tr -d '[:space:]' < ndi-compress-ref.txt)}"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+      - name: Check out NDI-compress at that ref
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Waltham-Data-Science/NDI-compress
+          ref: ${{ steps.ref.outputs.ref }}
+          ssh-key: ${{ secrets.NDI_COMPRESS_DEPLOY_KEY }}
+          persist-credentials: false
+          path: ndi-compress
+      - id: sha
+        shell: bash
+        run: |
+          sha=$(git -C ndi-compress rev-parse HEAD)
+          echo "Building NDI-compress ${{ steps.ref.outputs.ref }} = $sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build and test on ${{ matrix.os }}
+    needs: resolve
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # 22.04 rather than latest: the Linux binaries need the glibc of the
+          # system they are built on, so an older one runs on more systems.
+          - os: ubuntu-22.04
+            bindir: linux
+            exe: ""
+          - os: macos-latest
+            bindir: macos
+            exe: ""
+          - os: windows-latest
+            bindir: windows
+            exe: ".exe"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out this package
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: pkg
+
+      - name: Check out NDI-compress
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Waltham-Data-Science/NDI-compress
+          ref: ${{ needs.resolve.outputs.sha }}
+          ssh-key: ${{ secrets.NDI_COMPRESS_DEPLOY_KEY }}
+          persist-credentials: false
+          path: ndi-compress
+
+      - uses: jwlawson/actions-setup-cmake@0d6a7d60b009d01c9e7523be22153ff8f19460d3 # v2.2.0
+
+      - name: Configure (Windows, MinGW)
+        if: runner.os == 'Windows'
+        run: cmake -S ndi-compress/C -B build -G "MinGW Makefiles"
+
+      - name: Configure (Linux, macOS)
+        if: runner.os != 'Windows'
+        run: cmake -S ndi-compress/C -B build
+
+      - name: Build
+        run: cmake --build build
+
+      - name: C tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Put the executables in the package
+        run: |
+          dest="pkg/src/ndicompress/bin/${{ matrix.bindir }}"
+          mkdir -p "$dest"
+          for name in ndi_compress_digital ndi_compress_ephys ndi_compress_time \
+                      ndi_compress_metadata ndi_compress_eventmarktext \
+                      ndi_uncompress_digital ndi_uncompress_ephys ndi_uncompress_time \
+                      ndi_uncompress_metadata ndi_uncompress_eventmarktext \
+                      compare_json compare_double; do
+            cp "build/${name}${{ matrix.exe }}" "$dest/"
+          done
+          chmod +x "$dest"/* || true
+          ls -l "$dest"
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.10"
+
+      - name: Test the package with the new executables
+        if: runner.os != 'Windows'
+        working-directory: pkg
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pytest
+
+      # The tools call tar. In Git Bash (this job's default shell) that is
+      # Git's GNU tar, which reads "C:\..." as a remote host; users, and
+      # test.yml, get Windows' own tar from PowerShell, so test there.
+      - name: Test the package with the new executables (Windows)
+        if: runner.os == 'Windows'
+        working-directory: pkg
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pytest
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bin-${{ matrix.bindir }}
+          path: pkg/src/ndicompress/bin/${{ matrix.bindir }}
+          if-no-files-found: error
+
+  commit:
+    name: Commit the executables
+    needs: [resolve, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: bin-*
+          path: artifacts
+
+      - name: Replace src/ndicompress/bin
+        run: |
+          for dir in linux macos windows; do
+            rm -rf "src/ndicompress/bin/$dir"
+            mkdir -p "src/ndicompress/bin/$dir"
+            cp artifacts/bin-$dir/* "src/ndicompress/bin/$dir/"
+          done
+          chmod +x src/ndicompress/bin/linux/* src/ndicompress/bin/macos/*
+          echo "${{ needs.resolve.outputs.sha }}" > ndi-compress-ref.txt
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/ndicompress/bin ndi-compress-ref.txt
+          if git diff --cached --quiet; then
+            echo "The binaries are already those of NDI-compress ${{ needs.resolve.outputs.sha }}."
+            exit 0
+          fi
+          git commit -m "Binaries from NDI-compress ${{ needs.resolve.outputs.sha }}" \
+                     -m "Built and tested on Linux, macOS and Windows by the build-binaries workflow (run ${{ github.run_id }})."
+          git push origin "HEAD:${{ github.ref_name }}"

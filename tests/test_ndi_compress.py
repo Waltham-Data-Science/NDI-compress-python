@@ -57,6 +57,51 @@ class TestNDICompress(unittest.TestCase):
         self.assertLess(max_diff, 1e-7)
         self.assertEqual(data_out.shape, (S, C))
 
+    def _ephys_round_trip(self, data, name, **kwargs):
+        filename = name
+        self.files_to_remove.append(filename + ".nbf.tgz")
+        ndi_compress.compress_ephys(data, filename, **kwargs)
+        data_out, _ = ndi_compress.expand_ephys(filename + ".nbf.tgz")
+        self.assertEqual(data_out.shape, data.shape)
+        return data_out
+
+    def test_ephys_dtypes_round_trip(self):
+        """Integer dtypes keep their signedness and size, as in MATLAB."""
+        S, C = 500, 3
+        rng = np.random.default_rng(0)
+        for dtype in (np.int8, np.uint8, np.int16, np.uint16, np.int32):
+            info = np.iinfo(dtype)
+            data = rng.integers(info.min, int(info.max) + 1, size=(S, C)).astype(dtype)
+            data_out = self._ephys_round_trip(data, "test_ephys_" + np.dtype(dtype).name)
+            np.testing.assert_array_equal(data_out, data.astype(np.float64),
+                                          err_msg=np.dtype(dtype).name)
+
+    def test_ephys_uint16_header(self):
+        """uint16 samples (e.g. Intan amplifier data) are stored as unsigned 16-bit."""
+        data = np.array([[0, 65535], [32768, 1], [100, 65000]], dtype=np.uint16)
+        filename = "test_ephys_uint16_header"
+        self._ephys_round_trip(data, filename)
+        import tarfile, tempfile
+        from ndicompress.header import read_ndi_header
+        with tempfile.TemporaryDirectory() as d:
+            with tarfile.open(filename + ".nbf.tgz", "r:gz") as tar:
+                m = [x for x in tar.getmembers() if x.name.endswith('.nbh')][0]
+                tar.extract(m, path=d)
+            params = read_ndi_header(os.path.join(d, m.name))
+        self.assertEqual(params['original_isunsigned'], 1)
+        self.assertEqual(params['original_bits_per_sample'], 16)
+
+    def test_ephys_float(self):
+        data = np.random.default_rng(1).standard_normal((200, 2))
+        data_out = self._ephys_round_trip(data, "test_ephys_float", data_format='float')
+        np.testing.assert_array_equal(data_out, data)
+
+    def test_ephys_float_without_format_is_int16(self):
+        """Non-integer data with no data_format is converted to int16, as before."""
+        data = np.array([[1.4, -2.6], [3.0, 4.2]])
+        data_out = self._ephys_round_trip(data, "test_ephys_legacy")
+        np.testing.assert_array_equal(data_out, data.astype(np.int16).astype(np.float64))
+
     def test_time(self):
         S, C = 100, 1
         t = np.linspace(0, 10, S)
