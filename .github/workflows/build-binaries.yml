@@ -6,7 +6,8 @@ name: Build binaries from NDI-compress
 # branch the workflow ran on.
 #
 # Which NDI-compress commit to build is recorded in ndi-compress-ref.txt:
-#   - push a change to that file (on any branch) to rebuild from that commit, or
+#   - push a change to that file (on any branch) to rebuild from that commit
+#     (a change to this workflow rebuilds too), or
 #   - run this workflow by hand (Actions > Build binaries from NDI-compress >
 #     Run workflow), optionally naming a branch, tag or commit; the file is
 #     updated to the commit that was built.
@@ -32,6 +33,7 @@ on:
   push:
     paths:
       - ndi-compress-ref.txt
+      - .github/workflows/build-binaries.yml
 
 # Read-only by default; only the commit job can push. Third-party actions are
 # pinned to commits, because whatever runs here ends up in executables that
@@ -150,7 +152,20 @@ jobs:
           python-version: "3.10"
 
       - name: Test the package with the new executables
+        if: runner.os != 'Windows'
         working-directory: pkg
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pytest
+
+      # The tools call tar. In Git Bash (this job's default shell) that is
+      # Git's GNU tar, which reads "C:\..." as a remote host; users, and
+      # test.yml, get Windows' own tar from PowerShell, so test there.
+      - name: Test the package with the new executables (Windows)
+        if: runner.os == 'Windows'
+        working-directory: pkg
+        shell: pwsh
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
